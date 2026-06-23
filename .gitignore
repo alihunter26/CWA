@@ -13,3 +13,14 @@ Thumbs.db
 # Large processed files (add exceptions below as needed)
 data/processed/*.csv
 data/crosswalks/*.csv
+
+# Generated summary / flag outputs (rebuilt from scripts)
+output/*.xlsx
+output/*.csv
+output/tables/*.csv
+
+# Excel temporary lock files
+~$*
+
+# R app history
+.Rapp.history

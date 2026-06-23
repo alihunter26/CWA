@@ -1,39 +1,112 @@
-# NPDES
+# CWA — Clean Water Act / NPDES Compliance Data
 
-Research project exploring facility-level compliance and water quality outcomes using NPDES data from EPA's Enforcement and Compliance History Online (ECHO) system.
+Research project exploring facility-level compliance, enforcement, and water-quality
+outcomes using NPDES data from EPA's Enforcement and Compliance History Online (ECHO)
+system. The current phase is **data understanding and quality assurance**: building
+per-dataset summaries, decoding ECHO's fields and conventions, and flagging suspicious
+or malformed records before any analysis.
 
 ## Data Sources
 
-All data is sourced from [EPA ECHO Data Downloads](https://echo.epa.gov/tools/data-downloads#downloads). Key datasets include:
+All data is from [EPA ECHO Data Downloads](https://echo.epa.gov/tools/data-downloads#downloads).
+Raw files live under `data/raw/` and are treated as **immutable** (never edited in place).
 
-- **ICIS-NPDES** — facility, permit, and compliance records
-- **NPDES Limits** — permit-level effluent standards by parameter
-- **Discharge Monitoring Reports (DMR)** — self-reported discharge measurements by facility and monitoring period
-- **NPDES Discharge Points** — spatial locations of permitted outfalls
-- **NPDES Catchment & ATTAINS** — links dischargers to receiving water body assessments
+| Location | Contents |
+|---|---|
+| `data/raw/npdes_downloads/` | 15 core ICIS-NPDES tables: facilities, permits, violations (compliance-schedule, permit-schedule, single-event), formal & informal enforcement, inspections, QNCR history, violation–enforcement links, NAICS/SIC, permit components & feature coords, data groups |
+| `data/raw/NPDES_LIMITS.csv` | Permit-level effluent limits by parameter and limit set |
+| `data/raw/npdes_dmrs_fy2025.zip` | Discharge Monitoring Reports, FY2025 (`NPDES_DMRS_FY2025.csv` inside) |
+| `data/raw/npdes_eff_downloads … .zip` | Effluent violations (`NPDES_EFF_VIOLATIONS.csv`, ~16 GB uncompressed) |
+| `data/raw/Attains/` | `ATTAINS_AU_CATCHMENTS`, `NPDES_CATCHMENTS`, `NPDES_ATTAINS_AU_SUMMARIES` — links dischargers to receiving-water assessments |
+| `data/raw/Master General Permits/` | `ICIS_MASTER_GENERAL_PERMITS.csv` (+ source zip) |
+| `data/raw/npdes_outfalls_layer.csv` | Spatial layer of permitted outfalls/discharge points |
+
+Raw data is excluded from version control (see `.gitignore`) due to size.
 
 ## Repository Structure
 
 ```
-NPDES/
+CWA/
 ├── data/
-│   ├── raw/          # original downloaded files — never modified
-│   ├── processed/    # cleaned and analysis-ready files
-│   └── crosswalks/   # reference tables (parameter codes, NAICS/SIC, state codes, etc.)
-├── scripts/          # numbered R scripts for downloading, cleaning, and analysis
-├── output/
-│   ├── tables/       # summary tables and regression output
-│   └── figures/      # plots and maps
+│   ├── raw/          # original ECHO downloads — never modified
+│   │   ├── npdes_downloads/        # 15 core ICIS-NPDES tables
+│   │   ├── Attains/                # receiving-water assessment links
+│   │   └── Master General Permits/
+│   ├── processed/    # cleaned / analysis-ready files (built from code)
+│   └── crosswalks/   # reference tables (parameter, NAICS/SIC, state codes)
+├── scripts/
+│   ├── summary/      # build per-dataset Excel summary sheets
+│   └── misc./        # data-quality diagnostics and one-off analyses
+├── output/           # generated summaries (.xlsx) and flagged/extract CSVs
+│   ├── tables/       # diagnostic CSV extracts
+│   └── figures/
 └── docs/
-    ├── data_dictionary.md   # variable definitions and table join logic
-    ├── codebook.md          # variable definitions for processed datasets
-    └── notes.md             # running notes on data quirks and decisions
+    ├── data_dictionary.md   # key fields and table join logic
+    ├── codebook.md          # variable definitions for processed data (stub)
+    └── notes.md             # running notes on quirks, decisions, findings
 ```
 
-## Data Notes
+## Scripts
 
-Raw data files are excluded from version control (see `.gitignore`) due to file size. Download scripts in `scripts/` reproduce the raw data from ECHO.
+### `scripts/summary/` — dataset summaries
+
+These all produce the **same summary-sheet format**: per variable, the percent missing,
+distinct-category counts, top frequent values (with code → description lookups), and
+numeric/date five-number summaries. Output is a timestamped `.xlsx` in `output/`.
+
+| Script | Input | Output |
+|---|---|---|
+| `summarize_npdes.R` | every CSV in `npdes_downloads/` | `npdes_summary_*.xlsx` (one sheet per table) |
+| `summarize_dmrs.R` | `npdes_dmrs_fy2025.zip` (read via `unzip -p`) | `dmrs_summary_*.xlsx` |
+| `summarize_eff_violations.R` | full `NPDES_EFF_VIOLATIONS.csv`, streamed from its zip (chunked, ~16 GB) | `eff_violations_summary_*.xlsx` |
+| `summarize_eff_violations_ny` | effluent violations, `NPDES_ID` starts with `NY` | `eff_violations_ny_*.csv` + `_summary_*.xlsx` |
+| `summarize_eff_violations_va.R` | effluent violations, `NPDES_ID` starts with `VA` | `eff_violations_va_*.csv` + `_summary_*.xlsx` |
+| `summarize_master_general_permits.R` | `ICIS_MASTER_GENERAL_PERMITS.csv` | `master_general_permits_summary_*.xlsx` |
+| `summarize_outfalls_layer.R` | `npdes_outfalls_layer.csv` | `outfalls_layer_summary_*.xlsx` |
+| `summarize_attains.R` | CSVs in `Attains/` | `attains_summary_*.xlsx` |
+
+`summarize_npdes.R` is the template the others mirror. It normalizes whitespace-only
+cells (e.g. the literal space ECHO uses for "blank" in QNCR `HLRNC`) to `NA`, so the
+`% Missing` column and the frequent-values list stay consistent. Set its `ONLY_FILE`
+variable to summarize a single table instead of all of them.
+
+### `scripts/misc./` — diagnostics & checks
+
+| Script | Purpose |
+|---|---|
+| `eff_flagged.R` | Flags suspicious effluent-violation rows for one state → `eff_flagged_<state>_*.csv`, each with a `FLAG_REASON`. Flags: negative `DMR_VALUE_NMBR`, negative `DMR_VALUE_STANDARD_UNITS`, a year before 1984 in any of four date columns, or any value > 1,000,000 in a non-ID column. State is set at the top or passed as an argument: `Rscript eff_flagged.R va` |
+| `count_informal_exact_duplicates.R` | Counts fully-identical duplicate rows in informal enforcement and writes every duplicate row, copies side by side, to `output/tables/` |
+| `dup_enforcement_pairs.R` | Diagnoses why `(NPDES_ID, ENF_IDENTIFIER)` pairs repeat in formal enforcement |
+| `dup_rows_by_enf_type.R` | Extracts formal-enforcement rows identical except `ENF_TYPE_CODE`/`DESC` (one action recorded once per statute) → `output/tables/` |
+| `cs_rnc_missingness.R` | Tests why RNC fields are ~61% blank in compliance-schedule violations (joins permit major/minor + RNC-tracking flags) |
+| `scheduled_difference.r` | Days between scheduled and actual milestone dates in compliance-schedule violations |
+| `read_in_file.r` | Scratch helper to read a flagged-output CSV |
+
+`scripts/misc./preview_dmr2025.R` is a one-off snippet to peek at the DMR zip.
+
+## Conventions
+
+- **Raw data is immutable.** Derived data is rebuilt from code into `data/processed/`.
+- **Outputs are timestamped** (`*_YYYY-MM-DD_HHMM.{xlsx,csv}`); each run writes a new
+  file rather than overwriting, so multiple dated versions accumulate in `output/`.
+- **Read CSVs as character** (`colClasses = "character"` / `fread`) before analysis so
+  IDs, codes, and penalty amounts aren't silently coerced.
+- **Interpreting ECHO blanks:** across ICIS files a blank almost always means
+  *"not applicable / hasn't occurred / not escalated"* — not "unknown." Some files use a
+  literal space rather than an empty string. Don't treat blanks as missing-at-random.
+  See `docs/notes.md`.
+
+## Housekeeping / known issues
+
+- All scripts use the current Dropbox path (`~/Library/CloudStorage/Dropbox/CWA/`) and
+  write their outputs to `output/`.
+- The `scripts/misc.` folder name has a trailing dot (likely unintended) — left as-is
+  for now since renaming it would change every reference.
 
 ## Context
 
-The Clean Water Act (1972) established the NPDES program, requiring point-source dischargers to obtain permits limiting pollutant releases into U.S. waters. ECHO publishes the underlying compliance data publicly, enabling research on regulatory enforcement, water quality outcomes, and environmental equity.
+The Clean Water Act (1972) established the NPDES program, requiring point-source
+dischargers to obtain permits limiting pollutant releases into U.S. waters. ECHO
+publishes the underlying compliance data publicly, enabling research on regulatory
+enforcement, water-quality outcomes, and environmental equity. See `docs/data_dictionary.md`
+for how the tables link together.
